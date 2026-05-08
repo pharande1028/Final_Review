@@ -376,52 +376,84 @@ def set_button():
     global selected_button, latest_request
     data = request.get_json()
     button = data.get("button")
-    
+    patient_id_param = data.get("patient_id")  # optional patient_id from frontend
+
     if button and 1 <= button <= 5:
         selected_button = button
         button_names = ["Call Nurse", "Water", "Food", "Bathroom", "Emergency"]
         action_name = button_names[button - 1]
-        
+
+        # Load patient from DB — use passed patient_id or fall back to first active patient
+        p = None
+        if patient_id_param:
+            p = Patient.query.filter_by(patient_id=patient_id_param, is_active=True).first()
+        if not p:
+            p = Patient.query.filter_by(is_active=True).order_by(Patient.id.desc()).first()
+
+        pid   = p.patient_id if p else patient_info.get("id", "UNKNOWN")
+        pname = p.full_name  if p else patient_info.get("name", "Unknown Patient")
+        pbed  = p.bed_number if p else patient_info.get("bed_number", "N/A")
+        proom = p.room_number if p else patient_info.get("room_number", "N/A")
+        pcond = p.primary_condition if p else patient_info.get("primary_condition", "N/A")
+
         # Save request to database
         try:
             new_request = PatientRequest(
-                patient_id=patient_info.get("id", "UNKNOWN"),
+                patient_id=pid,
                 request_type=button,
                 request_method='gesture',
                 request_message=f"Hand Gesture: {action_name}",
-                room_number=patient_info.get("room_number", "N/A"),
-                bed_number=patient_info.get("bed_number", "N/A"),
+                room_number=proom,
+                bed_number=pbed,
                 urgency_level='critical' if button == 5 else 'normal'
             )
-            
             db.session.add(new_request)
             db.session.commit()
-            
         except Exception as e:
             print(f"[ERROR] Failed to save request: {e}")
-        
+
         # Update latest request for real-time dashboard
         latest_request = {
-            "patientName": patient_info.get("name", "Unknown Patient"),
-            "patientId": patient_info.get("id", "N/A"),
-            "bedNumber": patient_info.get("bed_number", "N/A"),
-            "roomNumber": patient_info.get("room_number", "N/A"),
-            "primaryCondition": patient_info.get("primary_condition", "N/A"),
+            "patientName": pname,
+            "patientId": pid,
+            "bedNumber": pbed,
+            "roomNumber": proom,
+            "primaryCondition": pcond,
             "requestType": button,
             "timestamp": time.time(),
             "message": f"Hand Gesture: {action_name}",
             "type": "gesture"
         }
-        
-        print(f"[NOTIFICATION] {patient_info.get('name', 'Patient')} - {action_name} (Gesture)")
+
+        print(f"[NOTIFICATION] {pname} - {action_name} (Gesture)")
         return jsonify({"status": "success", "message": action_name})
-    
+
     return jsonify({"status": "error", "message": "Invalid gesture"})
 
 @app.route('/listen_voice', methods=['POST'])
 def listen_voice():
-    # Simulate voice recognition for demo
     return jsonify({"status": "ready", "message": "Voice recognition ready (cloud mode)"})
+
+@app.route('/voice_command', methods=['POST'])
+def voice_command():
+    data = request.get_json()
+    command = data.get('command', '').lower()
+    voice_map = {
+        'nurse': 1, 'help': 1,
+        'water': 2, 'drink': 2,
+        'food': 3, 'hungry': 3, 'eat': 3,
+        'bathroom': 4, 'toilet': 4,
+        'emergency': 5, 'pain': 5, 'urgent': 5
+    }
+    button = None
+    for keyword, btn in voice_map.items():
+        if keyword in command:
+            button = btn
+            break
+    if button:
+        button_names = ["Call Nurse", "Water", "Food", "Bathroom", "Emergency"]
+        return jsonify({"status": "success", "button": button, "message": button_names[button - 1]})
+    return jsonify({"status": "no_match", "message": "No matching command"})
 
 @app.route('/stop_monitoring', methods=['POST'])
 def stop_monitoring():
