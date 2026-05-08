@@ -402,9 +402,10 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
     <script>
         let isFullscreen = false;
-        let buttonCheckInterval;
         let currentAction = null;
         let recognition = null;
+        let lastVoiceTime = 0;
+        const VOICE_COOLDOWN = 4000;
 
         document.addEventListener('DOMContentLoaded', function() {
             loadPatientInfo();
@@ -472,15 +473,16 @@
                     }
 
                     if (matched) {
+                        const now = Date.now();
+                        if (now - lastVoiceTime < VOICE_COOLDOWN) return;
+                        lastVoiceTime = now;
                         document.getElementById('voiceCommand').textContent = `Voice: "${command}" → ${matched.name}`;
-                        // Send to backend
                         fetch('/set_button', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ button: matched.button })
                         });
                         handleActionDetected(matched.button, matched.name);
-                        // Speak back confirmation to patient
                         speakConfirmation(matched.name);
                     }
                 };
@@ -614,11 +616,14 @@
         let hands, camera;
         let lastGestureTime = 0;
         let lastDetectedFingers = 0;
+        let gestureBuffer = [];
+        const GESTURE_COOLDOWN = 4000;      // 4 seconds between requests
+        const BUFFER_SIZE = 8;              // must see same gesture for 8 frames
+        const CONFIDENCE_THRESHOLD = 0.75; // min detection confidence
         
         function initializeHandGestureDetection() {
             const video = document.getElementById('videoFeed');
             
-            // Initialize MediaPipe Hands
             hands = new Hands({
                 locateFile: (file) => {
                     return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
@@ -628,13 +633,12 @@
             hands.setOptions({
                 maxNumHands: 1,
                 modelComplexity: 1,
-                minDetectionConfidence: 0.5,
-                minTrackingConfidence: 0.5
+                minDetectionConfidence: CONFIDENCE_THRESHOLD,
+                minTrackingConfidence: CONFIDENCE_THRESHOLD
             });
             
             hands.onResults(onHandResults);
             
-            // Initialize camera
             camera = new Camera(video, {
                 onFrame: async () => {
                     await hands.send({image: video});
@@ -647,29 +651,59 @@
         }
         
         function onHandResults(results) {
-            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                const landmarks = results.multiHandLandmarks[0];
-                const fingerCount = countFingers(landmarks);
-                
-                // Only process if different from last detection and enough time passed
-                const now = Date.now();
-                if (fingerCount !== lastDetectedFingers && (now - lastGestureTime) > 2000) {
-                    lastDetectedFingers = fingerCount;
-                    lastGestureTime = now;
-                    
-                    if (fingerCount >= 1 && fingerCount <= 5) {
-                        const actionName = getActionName(fingerCount);
-                        document.getElementById('handGesture').textContent = `Hand: ${fingerCount} finger(s) - ${actionName}`;
-                        fetch('/set_button', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ button: fingerCount })
-                        });
-                        handleActionDetected(fingerCount, actionName);
-                        speakConfirmation(actionName);
-                    }
-                }
+            if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+                // No hand detected — reset buffer
+                gestureBuffer = [];
+                document.getElementById('handGesture').textContent = 'Hand: None';
+                return;
             }
+
+            const landmarks = results.multiHandLandmarks[0];
+            const fingerCount = countFingers(landmarks);
+
+            // Only track valid gestures (1-5 fingers)
+            if (fingerCount < 1 || fingerCount > 5) {
+                gestureBuffer = [];
+                return;
+            }
+
+            // Add to buffer
+            gestureBuffer.push(fingerCount);
+            if (gestureBuffer.length > BUFFER_SIZE) gestureBuffer.shift();
+
+            // Show live finger count without triggering
+            document.getElementById('handGesture').textContent = `Hand: ${fingerCount} finger(s) detected`;
+
+            // Only trigger if buffer is full and ALL frames show same finger count
+            if (gestureBuffer.length < BUFFER_SIZE) return;
+            const allSame = gestureBuffer.every(f => f === gestureBuffer[0]);
+            if (!allSame) return;
+
+            const stableFingers = gestureBuffer[0];
+            const now = Date.now();
+
+            // Cooldown check
+            if (now - lastGestureTime < GESTURE_COOLDOWN) return;
+
+            // Same as last triggered gesture — skip
+            if (stableFingers === lastDetectedFingers && now - lastGestureTime < 8000) return;
+
+            // Trigger
+            lastDetectedFingers = stableFingers;
+            lastGestureTime = now;
+            gestureBuffer = [];
+
+            const actionName = getActionName(stableFingers);
+            document.getElementById('handGesture').textContent = `Hand: ${stableFingers} finger(s) - ${actionName}`;
+
+            fetch('/set_button', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ button: stableFingers })
+            });
+
+            handleActionDetected(stableFingers, actionName);
+            speakConfirmation(actionName);
         }
         
         function countFingers(landmarks) {
