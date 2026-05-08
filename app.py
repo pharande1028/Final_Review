@@ -284,12 +284,36 @@ def get_patients():
 
 @app.route('/api/get_latest_request', methods=['GET'])
 def get_latest_request():
-    global latest_request
-    if latest_request:
-        request_data = latest_request
-        latest_request = None
-        return jsonify({"request": request_data})
-    return jsonify({"request": None})
+    try:
+        # Get the most recent unread request from DB (last 30 seconds)
+        from datetime import timedelta
+        cutoff = datetime.utcnow() - timedelta(seconds=30)
+        req = PatientRequest.query.filter(
+            PatientRequest.timestamp >= cutoff,
+            PatientRequest.status == 'pending'
+        ).order_by(PatientRequest.timestamp.desc()).first()
+
+        if req:
+            patient = Patient.query.filter_by(patient_id=req.patient_id).first()
+            # Mark as acknowledged so it doesn't show again
+            req.status = 'acknowledged'
+            db.session.commit()
+            button_names = ["Call Nurse", "Water", "Food", "Bathroom", "Emergency"]
+            return jsonify({"request": {
+                "patientName": patient.full_name if patient else req.patient_id,
+                "patientId": req.patient_id,
+                "bedNumber": req.bed_number,
+                "roomNumber": req.room_number,
+                "primaryCondition": patient.primary_condition if patient else "N/A",
+                "requestType": req.request_type,
+                "timestamp": req.timestamp.timestamp(),
+                "message": req.request_message,
+                "type": req.request_method
+            }})
+        return jsonify({"request": None})
+    except Exception as e:
+        print(f"[ERROR] get_latest_request: {e}")
+        return jsonify({"request": None})
 
 @app.route('/api/remove_patient', methods=['POST'])
 def remove_patient():
