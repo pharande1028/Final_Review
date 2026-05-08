@@ -566,33 +566,7 @@
         }
 
         function startMonitoring() {
-            startButtonPolling();
             showNotification('Monitoring started - System is now active');
-        }
-
-        function startButtonPolling() {
-            if (buttonCheckInterval) {
-                clearInterval(buttonCheckInterval);
-            }
-
-            buttonCheckInterval = setInterval(() => {
-                fetch('/get_selected_button')
-                    .then(response => response.json())
-                    .then(data => {
-                        updateActionButtons(data.button);
-                        updateDetectionInfo(data);
-                        
-                        if (data.button) {
-                            if (data.button !== currentAction || !currentAction) {
-                                currentAction = data.button;
-                                handleActionDetected(data.button, data.text);
-                            }
-                        }
-                    })
-                    .catch(error => {
-                        console.error('Error polling for button:', error);
-                    });
-            }, 100);
         }
 
         function updateActionButtons(activeButton) {
@@ -607,25 +581,14 @@
             }
         }
 
-        function updateDetectionInfo(data) {
-            if (data.button) {
-                document.getElementById('handGesture').textContent = `Hand: ${data.button} finger(s)`;
-                document.getElementById('lastAction').textContent = `Last: ${data.text}`;
-            } else {
-                document.getElementById('handGesture').textContent = 'Hand: None';
-            }
-        }
-
         function handleActionDetected(action, text) {
-            showNotification(`Patient Request: ${text}`);
-            
+            showNotification(`Request Sent: ${text}`);
+            document.getElementById('lastAction').textContent = `Last: ${text}`;
+            updateActionButtons(action);
             if (action == 5) {
                 showNotification('🚨 EMERGENCY ALERT - Immediate assistance required!');
             }
-            
-            setTimeout(() => {
-                currentAction = null;
-            }, 3000);
+            setTimeout(() => { currentAction = null; }, 3000);
         }
 
         function showNotification(message) {
@@ -695,7 +658,8 @@
                     lastGestureTime = now;
                     
                     if (fingerCount >= 1 && fingerCount <= 5) {
-                        document.getElementById('handGesture').textContent = `Hand: ${fingerCount} finger(s)`;
+                        const actionName = getActionName(fingerCount);
+                        document.getElementById('handGesture').textContent = `Hand: ${fingerCount} finger(s) - ${actionName}`;
                         
                         // Send to backend
                         fetch('/set_button', {
@@ -704,7 +668,7 @@
                             body: JSON.stringify({ button: fingerCount })
                         });
                         
-                        handleActionDetected(fingerCount, getActionName(fingerCount));
+                        handleActionDetected(fingerCount, actionName);
                     }
                 }
             }
