@@ -448,14 +448,13 @@
                 recognition.onresult = function(event) {
                     const result = event.results[event.results.length - 1];
                     const command = result[0].transcript.toLowerCase().trim();
-                    
-                    // Show what is being heard in real time
                     document.getElementById('voiceCommand').textContent = `Voice: "${command}"`;
-
-                    // Only process final results
                     if (!result.isFinal) return;
 
-                    // Local keyword matching — no need to wait for backend
+                    // Block gestures while processing voice
+                    voiceActive = true;
+                    setTimeout(() => { voiceActive = false; }, 4000);
+
                     const voiceMap = [
                         { keywords: ['nurse', 'help', 'call'], button: 1, name: 'Call Nurse' },
                         { keywords: ['water', 'drink', 'thirsty'], button: 2, name: 'Water' },
@@ -463,15 +462,10 @@
                         { keywords: ['bathroom', 'toilet', 'washroom'], button: 4, name: 'Bathroom' },
                         { keywords: ['emergency', 'pain', 'urgent', 'sos'], button: 5, name: 'Emergency' }
                     ];
-
                     let matched = null;
                     for (const entry of voiceMap) {
-                        if (entry.keywords.some(k => command.includes(k))) {
-                            matched = entry;
-                            break;
-                        }
+                        if (entry.keywords.some(k => command.includes(k))) { matched = entry; break; }
                     }
-
                     if (matched) {
                         const now = Date.now();
                         if (now - lastVoiceTime < VOICE_COOLDOWN) return;
@@ -484,6 +478,8 @@
                         });
                         handleActionDetected(matched.button, matched.name);
                         speakConfirmation(matched.name);
+                    } else {
+                        document.getElementById('voiceCommand').textContent = `Voice: "${command}" — no match`;
                     }
                 };
                 
@@ -639,43 +635,41 @@
         let lastGestureTime = 0;
         let lastDetectedFingers = 0;
         let gestureBuffer = [];
-        const GESTURE_COOLDOWN = 4000;      // 4 seconds between requests
-        const BUFFER_SIZE = 8;              // must see same gesture for 8 frames
-        const CONFIDENCE_THRESHOLD = 0.75; // min detection confidence
+        let voiceActive = false;            // blocks gestures during voice
+        const GESTURE_COOLDOWN = 4000;
+        const BUFFER_SIZE = 10;             // needs 10 consistent frames
+        const CONFIDENCE_THRESHOLD = 0.85; // higher confidence required
         
         function initializeHandGestureDetection() {
             const video = document.getElementById('videoFeed');
-            
             hands = new Hands({
-                locateFile: (file) => {
-                    return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-                }
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
             });
-            
             hands.setOptions({
                 maxNumHands: 1,
                 modelComplexity: 1,
                 minDetectionConfidence: CONFIDENCE_THRESHOLD,
                 minTrackingConfidence: CONFIDENCE_THRESHOLD
             });
-            
             hands.onResults(onHandResults);
-            
             camera = new Camera(video, {
-                onFrame: async () => {
-                    await hands.send({image: video});
-                },
+                onFrame: async () => { await hands.send({image: video}); },
                 width: 640,
                 height: 480
             });
-            
             camera.start();
         }
         
         function onHandResults(results) {
+            // Block gesture detection while voice is being processed
+            if (voiceActive) {
+                document.getElementById('handGesture').textContent = 'Hand: Paused (voice active)';
+                return;
+            }
+
             if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
-                // No hand detected — reset buffer
                 gestureBuffer = [];
+                lastDetectedFingers = 0;
                 document.getElementById('handGesture').textContent = 'Hand: None';
                 return;
             }
@@ -683,69 +677,56 @@
             const landmarks = results.multiHandLandmarks[0];
             const fingerCount = countFingers(landmarks);
 
-            // Only track valid gestures (1-5 fingers)
             if (fingerCount < 1 || fingerCount > 5) {
                 gestureBuffer = [];
+                document.getElementById('handGesture').textContent = 'Hand: None';
                 return;
             }
 
-            // Add to buffer
             gestureBuffer.push(fingerCount);
             if (gestureBuffer.length > BUFFER_SIZE) gestureBuffer.shift();
 
-            // Show live finger count without triggering
-            document.getElementById('handGesture').textContent = `Hand: ${fingerCount} finger(s) detected`;
+            document.getElementById('handGesture').textContent = `Hand: ${fingerCount} finger(s) detected (${gestureBuffer.length}/${BUFFER_SIZE})`;
 
-            // Only trigger if buffer is full and ALL frames show same finger count
             if (gestureBuffer.length < BUFFER_SIZE) return;
             const allSame = gestureBuffer.every(f => f === gestureBuffer[0]);
-            if (!allSame) return;
+            if (!allSame) { gestureBuffer = []; return; }
 
             const stableFingers = gestureBuffer[0];
             const now = Date.now();
-
-            // Cooldown check
             if (now - lastGestureTime < GESTURE_COOLDOWN) return;
-
-            // Same as last triggered gesture — skip
             if (stableFingers === lastDetectedFingers && now - lastGestureTime < 8000) return;
 
-            // Trigger
             lastDetectedFingers = stableFingers;
             lastGestureTime = now;
             gestureBuffer = [];
 
             const actionName = getActionName(stableFingers);
             document.getElementById('handGesture').textContent = `Hand: ${stableFingers} finger(s) - ${actionName}`;
-
             fetch('/set_button', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ button: stableFingers })
             });
-
             handleActionDetected(stableFingers, actionName);
             speakConfirmation(actionName);
         }
         
         function countFingers(landmarks) {
-            const tipIds = [4, 8, 12, 16, 20]; // Thumb, Index, Middle, Ring, Pinky tips
-            const pipIds = [3, 6, 10, 14, 18]; // PIP joints for comparison
-            
+            const tipIds = [4, 8, 12, 16, 20];
+            const pipIds = [3, 6, 10, 14, 18];
             let fingers = 0;
-            
-            // Thumb (different logic - compare x coordinates)
-            if (landmarks[tipIds[0]].x > landmarks[pipIds[0]].x) {
-                fingers++;
-            }
-            
-            // Other fingers (compare y coordinates - tip should be above PIP)
+
+            // Thumb — only count if clearly extended (stricter margin)
+            const thumbExtended = landmarks[tipIds[0]].x < landmarks[pipIds[0]].x - 0.05;
+            if (thumbExtended) fingers++;
+
+            // Other 4 fingers — tip must be clearly above PIP (stricter margin)
             for (let i = 1; i < 5; i++) {
-                if (landmarks[tipIds[i]].y < landmarks[pipIds[i]].y) {
+                if (landmarks[tipIds[i]].y < landmarks[pipIds[i]].y - 0.04) {
                     fingers++;
                 }
             }
-            
             return fingers;
         }
         
