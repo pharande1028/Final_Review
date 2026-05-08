@@ -21,11 +21,12 @@ app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:/
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 CORS(app, origins=['*'])  # Allow all origins for development and deployment
 
-# Initialize rate limiter
+# Initialize rate limiter - disabled for demo
 limiter = Limiter(
     key_func=get_remote_address,
     app=app,
-    default_limits=["1000 per hour"]
+    default_limits=[],
+    enabled=False
 )
 
 # Initialize database
