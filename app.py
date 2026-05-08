@@ -1,7 +1,6 @@
 from flask import Flask, render_template, Response, request, jsonify, send_from_directory, redirect
 from flask_cors import CORS
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
+
 import time
 import json
 import os
@@ -21,13 +20,7 @@ app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:/
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 CORS(app, origins=['*'])  # Allow all origins for development and deployment
 
-# Initialize rate limiter - disabled for demo
-limiter = Limiter(
-    key_func=get_remote_address,
-    app=app,
-    default_limits=[],
-    enabled=False
-)
+
 
 # Initialize database
 init_database(app)
@@ -290,7 +283,6 @@ def get_patients():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/api/get_latest_request', methods=['GET'])
-@limiter.exempt
 def get_latest_request():
     global latest_request
     if latest_request:
@@ -368,13 +360,11 @@ def start_monitoring():
     return jsonify({"status": "success", "message": "Monitoring started (cloud mode)"})
 
 @app.route('/get_selected_button')
-@limiter.exempt
 def get_selected_button():
     global selected_button
     return jsonify({"button": selected_button, "text": "Demo Mode"})
 
 @app.route('/set_button', methods=['POST'])
-@limiter.exempt
 def set_button():
     global selected_button, latest_request
     data = request.get_json()
