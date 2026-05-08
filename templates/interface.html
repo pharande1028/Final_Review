@@ -660,15 +660,13 @@
                     if (fingerCount >= 1 && fingerCount <= 5) {
                         const actionName = getActionName(fingerCount);
                         document.getElementById('handGesture').textContent = `Hand: ${fingerCount} finger(s) - ${actionName}`;
-                        
-                        // Send to backend
                         fetch('/set_button', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ button: fingerCount })
                         });
-                        
                         handleActionDetected(fingerCount, actionName);
+                        speakConfirmation(actionName);
                     }
                 }
             }
@@ -706,14 +704,15 @@
             return actions[fingerCount] || "Unknown";
         }
         
-        // Add manual gesture buttons for testing
         function simulateGesture(fingers) {
+            const actionName = getActionName(fingers);
             fetch('/set_button', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ button: fingers })
             });
-            handleActionDetected(fingers, `Manual: ${fingers} fingers`);
+            handleActionDetected(fingers, actionName);
+            speakConfirmation(actionName);
         }
 
         function leavePatientMonitoring() {
