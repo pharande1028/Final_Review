@@ -517,10 +517,27 @@
 
         function speakConfirmation(actionName) {
             if ('speechSynthesis' in window) {
-                const msg = new SpeechSynthesisUtterance(`${actionName} request sent`);
+                // Cancel any ongoing speech first
+                window.speechSynthesis.cancel();
+                const messages = {
+                    'Call Nurse':  'Nurse request sent to caregiver. Help is on the way.',
+                    'Water':       'Water request sent to caregiver. Someone will bring water shortly.',
+                    'Food':        'Food request sent to caregiver. A meal will be brought to you.',
+                    'Bathroom':    'Bathroom assistance request sent to caregiver. Help is coming.',
+                    'Emergency':   'Emergency alert sent to caregiver. Help is on the way immediately.'
+                };
+                const text = messages[actionName] || `${actionName} request sent to caregiver.`;
+                const msg = new SpeechSynthesisUtterance(text);
                 msg.volume = 1;
-                msg.rate = 1;
+                msg.rate = 0.9;
                 msg.pitch = 1;
+                msg.lang = 'en-US';
+                // Pick a clear voice if available
+                const voices = window.speechSynthesis.getVoices();
+                const preferred = voices.find(v => v.lang === 'en-US' && v.name.includes('Female'))
+                                || voices.find(v => v.lang === 'en-US')
+                                || voices[0];
+                if (preferred) msg.voice = preferred;
                 window.speechSynthesis.speak(msg);
             }
         }
@@ -568,6 +585,11 @@
         }
 
         function startMonitoring() {
+            // Pre-load voices so they are ready when needed
+            if ('speechSynthesis' in window) {
+                window.speechSynthesis.getVoices();
+                window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
+            }
             showNotification('Monitoring started - System is now active');
         }
 
